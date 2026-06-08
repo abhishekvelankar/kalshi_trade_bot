@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-netflix-bg text-netflix-text font-sans antialiased;
+  }
+  ::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-netflix-surface;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-netflix-border rounded-full;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-netflix-surface border border-netflix-border rounded-xl p-5;
+  }
+  .badge-yes {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-900/40 text-netflix-green border border-netflix-green/30;
+  }
+  .badge-no {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-900/40 text-netflix-red border border-netflix-red/30;
+  }
+  .badge-skip {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-800 text-netflix-muted border border-netflix-border;
+  }
+  .badge-pending {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-900/40 text-netflix-yellow border border-netflix-yellow/30;
+  }
+  .stat-label {
+    @apply text-xs font-medium text-netflix-muted uppercase tracking-wider;
+  }
+  .stat-value {
+    @apply text-2xl font-bold text-netflix-text;
+  }
+}
