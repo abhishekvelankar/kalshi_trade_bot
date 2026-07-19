@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, func, select
 
 from src.database.db import SessionLocal
 from src.database.models import TradingCycle, BTCSnapshot, MarketSnapshot, PredictionRecord, Trade
@@ -63,6 +63,9 @@ class CycleListItem(BaseModel):
     market_ticker: str
     market_title: Optional[str]
     target_price: Optional[float]
+    coin_price: Optional[float]
+    strike_diff: Optional[float]
+    strike_diff_pct: Optional[float]
     status: str
 
     model_config = {"from_attributes": True}
@@ -79,12 +82,55 @@ class CycleDetail(CycleListItem):
 def list_cycles(
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
+    series_ticker: Optional[str] = Query(None),
 ):
     with SessionLocal() as db:
-        rows = db.execute(
-            select(TradingCycle).order_by(desc(TradingCycle.cycle_start)).offset(offset).limit(limit)
-        ).scalars().all()
-        return rows
+        q = select(TradingCycle).order_by(desc(TradingCycle.cycle_start))
+        if series_ticker:
+            q = q.where(TradingCycle.market_ticker.like(f"{series_ticker}%"))
+        cycles = db.execute(q.offset(offset).limit(limit)).scalars().all()
+
+        # Batch-fetch last coin price per cycle
+        cycle_ids = [c.id for c in cycles]
+        last_price_map: dict[int, float] = {}
+        if cycle_ids:
+            max_ts_sq = (
+                select(BTCSnapshot.cycle_id, func.max(BTCSnapshot.captured_at).label("max_at"))
+                .where(BTCSnapshot.cycle_id.in_(cycle_ids))
+                .group_by(BTCSnapshot.cycle_id)
+                .subquery()
+            )
+            price_rows = db.execute(
+                select(BTCSnapshot.cycle_id, BTCSnapshot.price_usd)
+                .join(max_ts_sq, and_(
+                    BTCSnapshot.cycle_id == max_ts_sq.c.cycle_id,
+                    BTCSnapshot.captured_at == max_ts_sq.c.max_at,
+                ))
+            ).all()
+            last_price_map = {cid: price for cid, price in price_rows}
+
+    result = []
+    for c in cycles:
+        coin_price = last_price_map.get(c.id)
+        strike = c.target_price
+        if coin_price is not None and strike and strike > 0:
+            diff = coin_price - strike
+            diff_pct = round(diff / strike * 100, 4)
+        else:
+            diff = diff_pct = None
+        result.append(CycleListItem(
+            id=c.id,
+            cycle_start=c.cycle_start,
+            cycle_end=c.cycle_end,
+            market_ticker=c.market_ticker,
+            market_title=c.market_title,
+            target_price=strike,
+            coin_price=round(coin_price, 2) if coin_price is not None else None,
+            strike_diff=round(diff, 2) if diff is not None else None,
+            strike_diff_pct=diff_pct,
+            status=c.status.value,
+        ))
+    return result
 
 
 @router.get("/{cycle_id}", response_model=CycleDetail)

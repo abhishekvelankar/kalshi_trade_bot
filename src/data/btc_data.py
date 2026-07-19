@@ -1,7 +1,7 @@
 """
-Fetches BTC price and on-chain data from public free APIs:
-  - CoinGecko: current price and recent candles
-  - mempool.space: fee rates, mempool stats, block height
+Fetches coin price and on-chain data from public free APIs:
+  - CoinGecko: current price (any coin by coin_id)
+  - mempool.space: fee rates, mempool stats, block height (BTC only)
 
 No API key required for either source.
 """
@@ -41,38 +41,45 @@ class BTCSnapshot:
     momentum_score: float  # -1.0 (bearish) to +1.0 (bullish)
 
 
-# Simple in-memory ring buffer for computing momentum
-_price_history: list[tuple[float, float]] = []  # (timestamp, price)
+# Per-coin ring buffers for momentum computation
+_price_histories: dict[str, list[tuple[float, float]]] = {}
 _MAX_HISTORY = 15  # minutes
 
 
-def _record_price(price: float) -> None:
+def _record_price(coin_id: str, price: float) -> None:
+    if coin_id not in _price_histories:
+        _price_histories[coin_id] = []
     now = time.time()
-    _price_history.append((now, price))
+    _price_histories[coin_id].append((now, price))
     cutoff = now - (_MAX_HISTORY * 60)
-    while _price_history and _price_history[0][0] < cutoff:
-        _price_history.pop(0)
+    hist = _price_histories[coin_id]
+    while hist and hist[0][0] < cutoff:
+        hist.pop(0)
 
 
-def _price_change_pct(minutes_ago: int) -> Optional[float]:
-    if len(_price_history) < 2:
+def _price_change_pct(coin_id: str, minutes_ago: int) -> Optional[float]:
+    history = _price_histories.get(coin_id, [])
+    if len(history) < 2:
         return None
     now = time.time()
     target_ts = now - (minutes_ago * 60)
-    past_prices = [p for ts, p in _price_history if ts <= target_ts]
+    past_prices = [p for ts, p in history if ts <= target_ts]
     if not past_prices:
         return None
     past_price = past_prices[-1]
-    current_price = _price_history[-1][1]
+    current_price = history[-1][1]
     return (current_price - past_price) / past_price
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def _fetch_btc_price() -> float:
+def _fetch_coin_price(coin_id: str) -> float:
     url = f"{cfg.coingecko_url}/simple/price"
-    resp = httpx.get(url, params={"ids": "bitcoin", "vs_currencies": "usd"}, timeout=10)
+    resp = httpx.get(url, params={"ids": coin_id, "vs_currencies": "usd"}, timeout=10)
     resp.raise_for_status()
-    return float(resp.json()["bitcoin"]["usd"])
+    data = resp.json()
+    if coin_id not in data:
+        raise ValueError(f"CoinGecko returned no data for coin_id={coin_id}")
+    return float(data[coin_id]["usd"])
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
@@ -108,43 +115,32 @@ def _calc_momentum_score(
     floor_strike: Optional[float],
 ) -> float:
     """
-    Momentum score tuned for KXBTC15M: -1.0 (bearish) to +1.0 (bullish).
+    Momentum score: -1.0 (bearish) to +1.0 (bullish).
 
-    KXBTC15M resolves YES if the BRTI average at close >= BRTI average at open
-    (floor_strike). Three components, each normalised to [-1, +1]:
+    Three components, each normalised to [-1, +1]:
+      50% — Distance from strike (current vs opening reference)
+      30% — 1-minute price change
+      20% — 5-minute price change
 
-      50% — Distance from strike
-            (current_price - floor_strike) / floor_strike, clipped at ±0.5%.
-            If we're already above the opening reference, YES is winning.
-
-      30% — 1-minute price change, clipped at ±0.2%.
-            The most recent momentum is the strongest short-term predictor.
-
-      20% — 5-minute price change, clipped at ±0.5%.
-            Medium-term trend context.
-
-    Mempool fees are dropped: they measure block congestion, not price direction.
-    Missing components are skipped and remaining weights are rescaled.
+    Clip thresholds are calibrated for BTC-scale moves (±0.5%).
+    Higher-volatility coins (SOL, DOGE) will saturate at ±1.0 more often,
+    which is fine — it means the signal is unambiguous.
     """
     score = 0.0
     weight_total = 0.0
 
     if floor_strike and floor_strike > 0:
-        # How far above/below the opening reference price we currently are.
-        # ±0.5% move = max signal (BTC rarely moves more than that in 15 min).
         dist = (price_usd - floor_strike) / floor_strike
         normalised = max(-1.0, min(1.0, dist / 0.005))
         score += normalised * 0.50
         weight_total += 0.50
 
     if price_change_1m is not None:
-        # ±0.2% per minute = typical BTC intra-minute range.
         normalised = max(-1.0, min(1.0, price_change_1m / 0.002))
         score += normalised * 0.30
         weight_total += 0.30
 
     if price_change_5m is not None:
-        # ±0.5% over 5 min = moderate move.
         normalised = max(-1.0, min(1.0, price_change_5m / 0.005))
         score += normalised * 0.20
         weight_total += 0.20
@@ -152,27 +148,25 @@ def _calc_momentum_score(
     if weight_total == 0:
         return 0.0
 
-    # Rescale so missing components don't shrink the score range.
     return round(score / weight_total, 4)
 
 
-def get_snapshot(floor_strike: Optional[float] = None) -> BTCSnapshot:
+def get_snapshot(coin_id: str = "bitcoin", floor_strike: Optional[float] = None) -> BTCSnapshot:
     """
-    Fetch all BTC data and compute momentum score.
-    Pass floor_strike (the KXBTC15M opening reference price) so the
-    distance-from-strike component can be included in the score.
+    Fetch price data for the given coin and compute momentum score.
+    Mempool data is only fetched for bitcoin (it's BTC-specific).
     """
-    price = _fetch_btc_price()
-    _record_price(price)
+    price = _fetch_coin_price(coin_id)
+    _record_price(coin_id, price)
 
     market = BTCMarketData(
         price_usd=price,
-        price_change_1m=_price_change_pct(1),
-        price_change_5m=_price_change_pct(5),
-        price_change_10m=_price_change_pct(10),
+        price_change_1m=_price_change_pct(coin_id, 1),
+        price_change_5m=_price_change_pct(coin_id, 5),
+        price_change_10m=_price_change_pct(coin_id, 10),
     )
 
-    mempool = _fetch_mempool()
+    mempool = _fetch_mempool() if coin_id == "bitcoin" else MempoolData(None, None, None, None, None)
 
     momentum = _calc_momentum_score(
         price_usd=price,

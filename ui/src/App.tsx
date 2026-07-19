@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { TradeModeProvider } from './context/TradeModeContext'
+import { SeriesProvider } from './context/SeriesContext'
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
 import LiveAnalysis from './pages/LiveAnalysis'
@@ -10,6 +12,8 @@ import CycleDetail from './pages/CycleDetail'
 
 export default function App() {
   return (
+    <SeriesProvider>
+    <TradeModeProvider>
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
@@ -23,5 +27,7 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </TradeModeProvider>
+    </SeriesProvider>
   )
 }

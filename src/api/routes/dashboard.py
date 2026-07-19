@@ -6,13 +6,13 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, func, select
 
 from src.config import trading as trade_cfg, prediction as pred_cfg
 from src.database.db import SessionLocal
-from src.database.models import Trade, TradingCycle, TradeOutcome
+from src.database.models import BTCSnapshot, Trade, TradingCycle, TradeOutcome
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -113,6 +113,11 @@ class RecentCycleItem(BaseModel):
     kalshi_yes_prob: Optional[float]
     btc_score: Optional[float]
     skip_reason: Optional[str]
+    # Strike vs coin price
+    target_price: Optional[float]
+    coin_price: Optional[float]
+    strike_diff: Optional[float]
+    strike_diff_pct: Optional[float]
     # Trade (if taken)
     trade_side: Optional[str]
     trade_cost: Optional[float]
@@ -144,7 +149,10 @@ class DashboardResponse(BaseModel):
 
 
 @router.get("/", response_model=DashboardResponse)
-def get_dashboard():
+def get_dashboard(
+    is_paper: Optional[bool] = Query(None),
+    series_ticker: Optional[str] = Query(None),
+):
     with SessionLocal() as db:
         # Latest cycle (for hero card)
         latest_cycle = db.execute(
@@ -171,10 +179,36 @@ def get_dashboard():
             select(TradingCycle).order_by(desc(TradingCycle.cycle_start)).limit(20)
         ).scalars().all()
 
+        # Batch-fetch last coin price for each recent cycle
+        recent_ids = [c.id for c in recent_cycles_db]
+        recent_price_map: dict[int, float] = {}
+        if recent_ids:
+            max_ts_sq = (
+                select(BTCSnapshot.cycle_id, func.max(BTCSnapshot.captured_at).label("max_at"))
+                .where(BTCSnapshot.cycle_id.in_(recent_ids))
+                .group_by(BTCSnapshot.cycle_id)
+                .subquery()
+            )
+            price_rows = db.execute(
+                select(BTCSnapshot.cycle_id, BTCSnapshot.price_usd)
+                .join(max_ts_sq, and_(
+                    BTCSnapshot.cycle_id == max_ts_sq.c.cycle_id,
+                    BTCSnapshot.captured_at == max_ts_sq.c.max_at,
+                ))
+            ).all()
+            recent_price_map = {cid: price for cid, price in price_rows}
+
         recent_cycles = []
         for c in recent_cycles_db:
             pred = c.prediction
             trade = c.trade
+            coin_price = recent_price_map.get(c.id)
+            strike = c.target_price
+            if coin_price is not None and strike and strike > 0:
+                diff = coin_price - strike
+                diff_pct = round(diff / strike * 100, 4)
+            else:
+                diff = diff_pct = None
             recent_cycles.append(RecentCycleItem(
                 id=c.id,
                 cycle_start=c.cycle_start,
@@ -186,6 +220,10 @@ def get_dashboard():
                 kalshi_yes_prob=pred.kalshi_yes_prob if pred else None,
                 btc_score=pred.btc_score if pred else None,
                 skip_reason=_parse_skip_reason(pred.reasoning if pred else None),
+                target_price=strike,
+                coin_price=round(coin_price, 2) if coin_price is not None else None,
+                strike_diff=round(diff, 2) if diff is not None else None,
+                strike_diff_pct=diff_pct,
                 trade_side=trade.side.value if trade else None,
                 trade_cost=trade.total_cost if trade else None,
                 trade_outcome=trade.outcome.value if trade else None,
@@ -193,8 +231,15 @@ def get_dashboard():
                 is_paper=trade.is_paper if trade else None,
             ))
 
-        # Aggregate P&L
-        all_trades = db.execute(select(Trade)).scalars().all()
+        # Aggregate P&L — optionally filter by paper/live mode and series
+        tq = select(Trade)
+        if series_ticker:
+            tq = tq.join(TradingCycle, Trade.cycle_id == TradingCycle.id).where(
+                TradingCycle.market_ticker.like(f"{series_ticker}%")
+            )
+        all_trades = db.execute(tq).scalars().all()
+        if is_paper is not None:
+            all_trades = [t for t in all_trades if t.is_paper == is_paper]
         wins = sum(1 for t in all_trades if t.outcome == TradeOutcome.win)
         losses = sum(1 for t in all_trades if t.outcome == TradeOutcome.loss)
         resolved = wins + losses

@@ -35,7 +35,8 @@ export default function RecentCyclesTable({ cycles }: Props) {
               <th className="py-2 pr-4 font-medium">Market</th>
               <th className="py-2 pr-4 font-medium">Decision</th>
               <th className="py-2 pr-4 font-medium">Kalshi YES</th>
-              <th className="py-2 pr-4 font-medium">BTC Score</th>
+              <th className="py-2 pr-4 font-medium">Score</th>
+              <th className="py-2 pr-4 font-medium">vs Strike</th>
               <th className="py-2 pr-4 font-medium">Reason / Outcome</th>
               <th className="py-2 text-right font-medium">P&L</th>
             </tr>
@@ -96,7 +97,7 @@ export default function RecentCyclesTable({ cycles }: Props) {
                     )}
                   </td>
 
-                  {/* BTC momentum score */}
+                  {/* Coin momentum score */}
                   <td className="py-3 pr-4 text-xs">
                     {c.btc_score !== null ? (
                       <span
@@ -111,6 +112,20 @@ export default function RecentCyclesTable({ cycles }: Props) {
                       >
                         {c.btc_score >= 0 ? '+' : ''}{c.btc_score.toFixed(2)}
                       </span>
+                    ) : (
+                      <span className="text-netflix-dim">—</span>
+                    )}
+                  </td>
+
+                  {/* Strike diff */}
+                  <td className="py-3 pr-4 text-xs">
+                    {c.strike_diff != null && c.strike_diff_pct != null ? (
+                      <div>
+                        <span className={clsx('font-semibold font-mono', c.strike_diff >= 0 ? 'text-netflix-green' : 'text-netflix-red')}>
+                          {c.strike_diff >= 0 ? '+' : ''}{c.strike_diff_pct.toFixed(2)}%
+                        </span>
+                        <p className="text-netflix-dim mt-0.5">${c.coin_price?.toLocaleString()}</p>
+                      </div>
                     ) : (
                       <span className="text-netflix-dim">—</span>
                     )}

@@ -49,6 +49,7 @@ export default function Trades() {
                 <th className="py-3 pr-4 font-medium">ID</th>
                 <th className="py-3 pr-4 font-medium">Date / Time</th>
                 <th className="py-3 pr-4 font-medium">Market</th>
+                <th className="py-3 pr-4 font-medium">vs Strike</th>
                 <th className="py-3 pr-4 font-medium">Side</th>
                 <th className="py-3 pr-4 font-medium text-right">Contracts</th>
                 <th className="py-3 pr-4 font-medium text-right">Price</th>
@@ -66,6 +67,18 @@ export default function Trades() {
                     {format(new Date(t.placed_at), 'MMM dd HH:mm')}
                   </td>
                   <td className="py-3 pr-4 font-mono text-xs text-netflix-muted">{t.ticker}</td>
+                  <td className="py-3 pr-4 text-xs">
+                    {t.strike_diff != null && t.strike_diff_pct != null ? (
+                      <div>
+                        <span className={clsx('font-semibold font-mono', t.strike_diff >= 0 ? 'text-netflix-green' : 'text-netflix-red')}>
+                          {t.strike_diff >= 0 ? '+' : ''}{t.strike_diff_pct.toFixed(2)}%
+                        </span>
+                        <p className="text-netflix-dim mt-0.5">
+                          ${t.coin_price?.toLocaleString()} vs ${t.strike_price?.toLocaleString()}
+                        </p>
+                      </div>
+                    ) : <span className="text-netflix-dim">—</span>}
+                  </td>
                   <td className="py-3 pr-4">
                     <Badge value={t.side.toUpperCase()} variant="auto" />
                   </td>

@@ -36,7 +36,8 @@ services:
       - "8000:8000"
     volumes:
       # Mount config so you can tweak it without rebuilding
-      - ./config:/app/config:ro
+      # Not read-only — executor writes back when auto-reverting to paper
+      - ./config:/app/config
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s

@@ -35,6 +35,14 @@ class Prediction:
     predicted_at: datetime
 
 
+def _count_strike_crossings(snapshots: list[BTCSnapshot], strike: float) -> int:
+    """Count how many times price crossed the strike during data collection."""
+    if not strike or len(snapshots) < 2:
+        return 0
+    above = [s.market.price_usd >= strike for s in snapshots]
+    return sum(1 for i in range(1, len(above)) if above[i] != above[i - 1])
+
+
 def _btc_score_to_prob(btc_score: float) -> float:
     """Map BTC momentum score (-1 to +1) onto a 0–1 bullish probability."""
     return (btc_score + 1.0) / 2.0
@@ -49,6 +57,7 @@ def _build_reasoning(
     btc_snapshot: BTCSnapshot,
     market: KalshiMarket,
     strike_block: Optional[str] = None,
+    strike_crossings: int = 0,
 ) -> str:
     breakdown = {
         "action": action.value,
@@ -71,6 +80,10 @@ def _build_reasoning(
             ) if market.target_price else None,
             "weight": cfg.btc_weight,
         },
+        "volatility": {
+            "strike_crossings": strike_crossings,
+            "max_allowed": cfg.max_strike_crossings,
+        },
         "thresholds": {
             "yes_threshold": cfg.yes_threshold,
             "no_threshold": cfg.no_threshold,
@@ -87,6 +100,8 @@ def _build_reasoning(
 def predict(
     btc_snapshots: list[BTCSnapshot],
     market: KalshiMarket,
+    *,
+    min_strike_distance_pct: Optional[float] = None,
 ) -> Prediction:
     """
     Generate a trading prediction from the accumulated BTC snapshots
@@ -149,16 +164,44 @@ def predict(
             abs((1 - combined_score) - cfg.no_threshold),
         )
 
-    # ── Strike position guard ──────────────────────────────────────────────
-    # KXBTC15M resolves YES if BRTI at close ≥ floor_strike.
-    # If BTC is currently above the strike, trading NO contradicts the most
-    # direct signal available (price vs threshold). Vice-versa for YES.
-    # This catches cases where yes_bid_dollars = 0 creates a false NO signal
-    # even though BTC is clearly above the strike.
+    # ── Strike proximity guard ─────────────────────────────────────────────
+    # If the coin is within ±min_strike_distance_pct of the strike, the market
+    # is essentially a coin flip — skip regardless of Kalshi odds.
     strike_block: Optional[str] = None
     last_price = btc_snapshots[-1].market.price_usd
     floor_strike = market.target_price
 
+    # Pre-compute crossing count (used by volatility filter and stored in reasoning)
+    crossings = _count_strike_crossings(btc_snapshots, floor_strike or 0)
+
+    strike_dist_threshold = min_strike_distance_pct if min_strike_distance_pct is not None else cfg.min_strike_distance_pct
+
+    if floor_strike and floor_strike > 0 and action != TradeAction.SKIP:
+        dist_pct = abs(last_price - floor_strike) / floor_strike * 100
+        if dist_pct < strike_dist_threshold:
+            strike_block = (
+                f"Price ${last_price:,.4f} is within {dist_pct:.3f}% of strike "
+                f"${floor_strike:,.4f} (min {strike_dist_threshold}%)"
+            )
+            action = TradeAction.SKIP
+            confidence = 0.0
+
+    # ── Volatility filter ─────────────────────────────────────────────────
+    # Count how many times price crossed the strike during data collection.
+    # Repeated crossings = oscillating around the strike = coin-flip outcome.
+    max_crossings = cfg.max_strike_crossings
+    if floor_strike and action != TradeAction.SKIP:
+        if crossings > max_crossings:
+            strike_block = (
+                f"Price crossed strike {crossings}x during data collection "
+                f"(max {max_crossings}x) — too volatile near strike"
+            )
+            action = TradeAction.SKIP
+            confidence = 0.0
+
+    # ── Strike position guard ──────────────────────────────────────────────
+    # If BTC is currently above the strike, trading NO contradicts the most
+    # direct signal available (price vs threshold). Vice-versa for YES.
     if floor_strike and action == TradeAction.NO and last_price > floor_strike:
         strike_block = (
             f"BTC ${last_price:,.0f} is above floor strike ${floor_strike:,.0f} "
@@ -178,6 +221,7 @@ def predict(
         btc_score, btc_score_as_prob, kalshi_yes_prob,
         combined_score, action, btc_snapshots[-1], market,
         strike_block=strike_block,
+        strike_crossings=crossings,
     )
 
     return Prediction(

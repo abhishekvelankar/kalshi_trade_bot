@@ -57,7 +57,8 @@ export default function CycleHistory() {
                 <th className="py-2 pr-4 font-medium w-8">#</th>
                 <th className="py-2 pr-4 font-medium">Cycle Start (UTC)</th>
                 <th className="py-2 pr-4 font-medium">Ticker</th>
-                <th className="py-2 pr-4 font-medium">Target</th>
+                <th className="py-2 pr-4 font-medium">Strike</th>
+                <th className="py-2 pr-4 font-medium">vs Strike</th>
                 <th className="py-2 pr-4 font-medium">Status</th>
                 <th className="py-2 font-medium">Duration</th>
               </tr>
@@ -84,10 +85,18 @@ export default function CycleHistory() {
                       </span>
                     </td>
                     <td className="py-3 pr-4 font-mono text-xs text-netflix-muted">{c.market_ticker}</td>
-                    <td className="py-3 pr-4 text-netflix-muted">
-                      {c.target_price != null
-                        ? `$${c.target_price.toLocaleString()}`
-                        : '—'}
+                    <td className="py-3 pr-4 text-netflix-muted text-xs">
+                      {c.target_price != null ? `$${c.target_price.toLocaleString()}` : '—'}
+                    </td>
+                    <td className="py-3 pr-4 text-xs">
+                      {c.strike_diff != null && c.strike_diff_pct != null ? (
+                        <div>
+                          <span className={clsx('font-semibold font-mono', c.strike_diff >= 0 ? 'text-netflix-green' : 'text-netflix-red')}>
+                            {c.strike_diff >= 0 ? '+' : ''}{c.strike_diff_pct.toFixed(2)}%
+                          </span>
+                          <p className="text-netflix-dim mt-0.5">${c.coin_price?.toLocaleString()}</p>
+                        </div>
+                      ) : <span className="text-netflix-dim">—</span>}
                     </td>
                     <td className="py-3 pr-4">
                       <span className={clsx('text-xs font-semibold uppercase', statusColor(c.status))}>

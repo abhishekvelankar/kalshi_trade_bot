@@ -32,6 +32,11 @@ export interface RecentCycleItem {
   kalshi_yes_prob: number | null
   btc_score: number | null
   skip_reason: string | null
+  // Strike vs coin price
+  target_price: number | null
+  coin_price: number | null
+  strike_diff: number | null
+  strike_diff_pct: number | null
   // Trade (null if SKIP)
   trade_side: 'yes' | 'no' | null
   trade_cost: number | null
@@ -64,6 +69,10 @@ export interface Trade {
   resolved_at?: string
   payout?: number
   pnl?: number
+  strike_price: number | null
+  coin_price: number | null
+  strike_diff: number | null
+  strike_diff_pct: number | null
 }
 
 export interface Cycle {
@@ -73,6 +82,9 @@ export interface Cycle {
   market_ticker: string
   market_title: string | null
   target_price: number | null
+  coin_price: number | null
+  strike_diff: number | null
+  strike_diff_pct: number | null
   status: 'running' | 'completed' | 'error'
 }
 

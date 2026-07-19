@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from cryptography.hazmat.backends import default_backend
@@ -71,8 +72,10 @@ def _sign(message: str) -> str:
 
 def _auth_headers(method: str, path: str) -> dict:
     timestamp_ms = str(int(time.time() * 1000))
-    # Signature covers timestamp + METHOD + /path (no query string)
-    message = timestamp_ms + method.upper() + path
+    # Signature covers timestamp + METHOD + full_path (including /trade-api/v2 prefix)
+    base_path = urlparse(cfg.base_url).path  # e.g. /trade-api/v2
+    full_path = base_path + path             # e.g. /trade-api/v2/portfolio/balance
+    message = timestamp_ms + method.upper() + full_path
     return {
         "KALSHI-ACCESS-KEY": cfg.api_key_id,
         "KALSHI-ACCESS-TIMESTAMP": timestamp_ms,
@@ -157,16 +160,16 @@ def _parse_close_time(ts: Optional[str]) -> Optional[datetime]:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def find_active_btc_market() -> Optional[KalshiMarket]:
+def find_active_market(series_ticker: str) -> Optional[KalshiMarket]:
     """
-    Search for the currently active BTC 15-min market.
+    Search for the currently active 15-min market for the given series.
     Returns the market closest to closing (most urgent).
     """
     now_ts = int(time.time())
-    # KXBTC15M markets open at :00/:15/:30/:45 and close 15 min later.
+    # Markets open at :00/:15/:30/:45 and close 15 min later.
     # Allow up to 20 min so we always catch the current cycle's market.
     data = _get("/markets", params={
-        "series_ticker": cfg.btc_series_ticker,
+        "series_ticker": series_ticker,
         "status": "open",
         "limit": 20,
         "min_close_ts": now_ts + cfg.trade_cutoff_seconds,
@@ -239,6 +242,32 @@ def place_order(
         side=side,
         contracts=contracts,
         price=price_cents,
+        status=order.get("status", "unknown"),
+    )
+
+
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
+def sell_contracts(
+    ticker: str,
+    side: str,      # "yes" or "no" — the side we own
+    contracts: int,
+) -> OrderResult:
+    """Sell (exit) a position at market price."""
+    body = {
+        "ticker": ticker,
+        "action": "sell",
+        "side": side,
+        "type": "market",
+        "count": contracts,
+    }
+    data = _post("/portfolio/orders", body)
+    order = data.get("order", data)
+    return OrderResult(
+        order_id=order.get("order_id", ""),
+        ticker=ticker,
+        side=side,
+        contracts=contracts,
+        price=0,
         status=order.get("status", "unknown"),
     )
 

@@ -34,7 +34,6 @@ class KalshiConfig:
     private_key: str = os.environ["KALSHI_PRIVATE_KEY"]
     demo_base_url: str = _raw["kalshi"]["demo_base_url"]
     live_base_url: str = _raw["kalshi"]["live_base_url"]
-    btc_series_ticker: str = _raw["kalshi"]["btc_series_ticker"]
     trade_cutoff_seconds: int = _raw["kalshi"]["trade_cutoff_seconds"]
 
     @property
@@ -51,6 +50,8 @@ class PredictionConfig:
     kalshi_weight: float = _raw["prediction"]["kalshi_weight"]
     btc_weight: float = _raw["prediction"]["btc_weight"]
     min_confidence: float = _raw["prediction"]["min_confidence"]
+    min_strike_distance_pct: float = _raw["prediction"].get("min_strike_distance_pct", 0.20)
+    max_strike_crossings: int = _raw["prediction"].get("max_strike_crossings", 1)
 
 
 class TimingConfig:
@@ -77,6 +78,26 @@ class APIConfig:
     poll_interval_ms: int = _raw["api"]["poll_interval_ms"]
 
 
+_sl = _raw.get("stop_loss", {})
+
+
+class StopLossConfig:
+    enabled: bool = _sl.get("enabled", True)
+    threshold_cents: float = _sl.get("threshold_cents", 60.0)
+    check_interval_seconds: int = _sl.get("check_interval_seconds", 30)
+
+
+_series_active = _raw.get("series", {}).get("active", [
+    {"ticker": "KXBTC15M", "coin_id": "bitcoin", "display_name": "BTC"},
+])
+
+
+class SeriesConfig:
+    active: list = _series_active
+    coin_map: dict = {s["ticker"]: s["coin_id"] for s in _series_active}
+    tickers: list = [s["ticker"] for s in _series_active]
+
+
 trading = TradingConfig()
 kalshi = KalshiConfig()
 prediction = PredictionConfig()
@@ -84,3 +105,15 @@ timing = TimingConfig()
 btc_data = BTCDataConfig()
 database = DatabaseConfig()
 api = APIConfig()
+series = SeriesConfig()
+stop_loss = StopLossConfig()
+
+
+def get_series_cfg(ticker: str) -> dict:
+    """Return effective config for a series, merging per-series overrides with global defaults."""
+    s = next((x for x in series.active if x["ticker"] == ticker), {})
+    return {
+        "paper_trade": bool(s.get("paper_trade", trading.paper_trade)),
+        "trade_amount": float(s.get("trade_amount", trading.trade_amount)),
+        "min_strike_distance_pct": float(s.get("min_strike_distance_pct", prediction.min_strike_distance_pct)),
+    }

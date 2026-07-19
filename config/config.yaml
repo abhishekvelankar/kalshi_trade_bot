@@ -5,11 +5,11 @@
 # ============================================================
 
 trading:
-  # Set to true for simulation (no real orders), false for live trading
+  # Global default — applies to any series that does not set its own paper_trade.
   paper_trade: true
 
-  # USD amount to allocate per trade
-  trade_amount: 100.0
+  # Global default trade amount — overridable per series below.
+  trade_amount: 50.0
 
   # Starting bankroll in USD — used to calculate ROI.
   # The same capital is reused across trades (not new money each time).
@@ -21,16 +21,69 @@ trading:
   # Prevents zero-profit trades when no_ask or yes_ask is at face value ($1.00).
   min_profit_margin_cents: 3
 
+stop_loss:
+  # Monitor open positions and sell early if the market moves against us.
+  enabled: true
+
+  # Exit if the owned side price falls below this many cents.
+  # e.g. bought YES at 80¢ — if YES drops below 60¢, sell back and recover ~60¢/contract
+  # instead of losing the full 80¢ at resolution.
+  threshold_cents: 52
+
+  # How often to poll the market during the hold period (seconds).
+  check_interval_seconds: 5
+
 kalshi:
   # Base URLs — paper uses demo environment, live uses production
   demo_base_url: "https://demo-api.kalshi.co/trade-api/v2"
-  live_base_url: "https://trading-api.kalshi.com/trade-api/v2"
-
-  # Kalshi market series ticker for BTC 15-min events
-  btc_series_ticker: "KXBTC15M"
+  live_base_url: "https://api.elections.kalshi.com/trade-api/v2"
 
   # How many seconds before market close to stop trading
   trade_cutoff_seconds: 60
+
+# Active trading series — each runs its own 15-min cycle in parallel.
+# coin_id must match the CoinGecko /simple/price "ids" parameter.
+series:
+  # Each series inherits global trading.paper_trade, trading.trade_amount, and
+  # prediction.min_strike_distance_pct unless overridden here.
+  # To go live on a single series: set paper_trade: false on that entry only.
+  active:
+    - ticker: "KXBTC15M"
+      coin_id: "bitcoin"
+      display_name: "BTC"
+      paper_trade: true
+      trade_amount: 50.0
+    - ticker: "KXETH15M"
+      coin_id: "ethereum"
+      display_name: "ETH"
+      paper_trade: true
+      trade_amount: 50.0
+    - ticker: "KXSOL15M"
+      coin_id: "solana"
+      display_name: "SOL"
+      paper_trade: true
+      trade_amount: 50.0
+    - ticker: "KXXRP15M"
+      coin_id: "ripple"
+      display_name: "XRP"
+      paper_trade: true
+      trade_amount: 50.0
+    - ticker: "KXDOGE15M"
+      coin_id: "dogecoin"
+      display_name: "DOGE"
+      paper_trade: true
+      trade_amount: 50.0
+    - ticker: "KXHYPE15M"
+      coin_id: "hyperliquid"
+      display_name: "HYPE"
+      paper_trade: true
+      trade_amount: 200.0
+      min_strike_distance_pct: 0.20
+    - ticker: "KXBNB15M"
+      coin_id: "binancecoin"
+      display_name: "BNB"
+      paper_trade: true
+      trade_amount: 50.0
 
 prediction:
   # Minimum Kalshi YES probability required to take a YES trade (0.0 - 1.0)
@@ -55,6 +108,18 @@ prediction:
 
   # Minimum combined confidence required to trade (0.0 - 1.0)
   min_confidence: 0.55
+
+  # Skip the trade if the coin price is within this % of the strike price.
+  # Too close to the strike = coin-flip territory, not worth the risk.
+  # 0.20 means skip if within ±0.20% of strike.
+  min_strike_distance_pct: 0.20
+
+  # Skip if price crossed the strike more than this many times during data collection.
+  # Each crossing = price flipped from above-to-below or below-to-above the strike.
+  # 0 crossings = stayed on one side the whole time (ideal).
+  # 1 crossing = changed sides once and settled (ok).
+  # 2+ crossings = oscillating around the strike = skip.
+  max_strike_crossings: 1
 
 timing:
   # Minutes into the cycle to stop collecting data and start predicting

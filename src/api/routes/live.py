@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 
@@ -230,21 +230,20 @@ def _empty_response() -> LiveAnalysisResponse:
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=LiveAnalysisResponse)
-def get_live_analysis():
+def get_live_analysis(series_ticker: Optional[str] = Query(None)):
     with SessionLocal() as db:
-        cycle = db.execute(
-            select(TradingCycle)
-            .where(TradingCycle.status == CycleStatus.running)
-            .order_by(desc(TradingCycle.cycle_start))
-            .limit(1)
-        ).scalar_one_or_none()
+        q = select(TradingCycle).where(TradingCycle.status == CycleStatus.running)
+        if series_ticker:
+            q = q.where(TradingCycle.market_ticker.like(f"{series_ticker}%"))
+        cycle = db.execute(q.order_by(desc(TradingCycle.cycle_start)).limit(1)).scalar_one_or_none()
 
         is_live = cycle is not None
 
         if not cycle:
-            cycle = db.execute(
-                select(TradingCycle).order_by(desc(TradingCycle.cycle_start)).limit(1)
-            ).scalar_one_or_none()
+            q2 = select(TradingCycle)
+            if series_ticker:
+                q2 = q2.where(TradingCycle.market_ticker.like(f"{series_ticker}%"))
+            cycle = db.execute(q2.order_by(desc(TradingCycle.cycle_start)).limit(1)).scalar_one_or_none()
 
         if not cycle:
             return _empty_response()
